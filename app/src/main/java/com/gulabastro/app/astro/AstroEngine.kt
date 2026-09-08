@@ -1,12 +1,9 @@
 package com.gulabastro.app.astro
 
-import swisseph.SweConst
-import swisseph.SweDate
-import swisseph.SwissEph
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
-import kotlin.math.floor
+import kotlin.math.*
 
 data class BirthData(val name: String, val localDateTime: LocalDateTime, val latitude: Double, val longitude: Double, val zoneId: ZoneId)
 data class PlanetPosition(val name: String, val longitude: Double, val speed: Double = 0.0, val retrograde: Boolean = false)
@@ -33,84 +30,39 @@ enum class Sign(val hi: String, val en: String) {
     SAGITTARIUS("धनु", "Sagittarius"), CAPRICORN("मकर", "Capricorn"), AQUARIUS("कुंभ", "Aquarius"), PISCES("मीन", "Pisces")
 }
 
+data class Orbital(val N: Double, val Ndot: Double, val i: Double, val idot: Double, val w: Double, val wdot: Double,
+                  val a: Double, val adot: Double, val e: Double, val edot: Double, val M: Double, val Mdot: Double)
+
 object AstroEngine {
-    private val swe = SwissEph()
     private val signNames = Sign.entries
     private val dashaYears = mapOf("Ketu" to 7.0, "Venus" to 20.0, "Sun" to 6.0, "Moon" to 10.0, "Mars" to 7.0, "Rahu" to 18.0, "Jupiter" to 16.0, "Saturn" to 19.0, "Mercury" to 17.0)
     private val dashaOrder = listOf("Ketu", "Venus", "Sun", "Moon", "Mars", "Rahu", "Jupiter", "Saturn", "Mercury")
     private val nakshatras = listOf("Ashwini","Bharani","Krittika","Rohini","Mrigashira","Ardra","Punarvasu","Pushya","Ashlesha","Magha","Purva Phalguni","Uttara Phalguni","Hasta","Chitra","Swati","Vishakha","Anuradha","Jyeshtha","Mula","Purva Ashadha","Uttara Ashadha","Shravana","Dhanishtha","Shatabhisha","Purva Bhadrapada","Uttara Bhadrapada","Revati")
     private val nakLord = listOf("Ketu","Venus","Sun","Moon","Mars","Rahu","Jupiter","Saturn","Mercury")
 
-    init {
-        // Standard Lahiri (Chitra Paksha) Ayanamsha for Vedic Astrology
-        swe.swe_set_sid_mode(SweConst.SE_SIDM_LAHIRI, 0.0, 0.0)
-    }
-
     fun calculate(b: BirthData): ChartResult {
         val utc = b.localDateTime.atZone(b.zoneId).withZoneSameInstant(ZoneId.of("UTC"))
-        val hourDecimal = utc.hour + (utc.minute / 60.0) + (utc.second / 3600.0)
-        val sd = SweDate(utc.year, utc.monthValue, utc.dayOfMonth, hourDecimal)
-        val tjdUt = sd.julDay
-
-        // Swiss Ephemeris Exact Lahiri Ayanamsha
-        val ayanamsha = swe.swe_get_ayanamsa_ut(tjdUt)
-
-        // Exact Sidereal Ascendant (Lagna)
-        val cusps = DoubleArray(13)
-        val ascmc = DoubleArray(10)
-        swe.swe_houses_ex(tjdUt, SweConst.SEFLG_SIDEREAL, b.latitude, b.longitude, 'P'.code, cusps, ascmc)
-        val ascSidereal = ascmc[0]
-
-        // 9 Vedic Grahas
-        val planetIds = listOf(
-            SweConst.SE_SUN to "Sun",
-            SweConst.SE_MOON to "Moon",
-            SweConst.SE_MARS to "Mars",
-            SweConst.SE_MERCURY to "Mercury",
-            SweConst.SE_JUPITER to "Jupiter",
-            SweConst.SE_VENUS to "Venus",
-            SweConst.SE_SATURN to "Saturn",
-            SweConst.SE_MEAN_NODE to "Rahu"
-        )
-
-        val planetList = mutableListOf<PlanetPosition>()
-        val xx = DoubleArray(6)
-        val serr = StringBuffer()
-        val flags = SweConst.SEFLG_SIDEREAL or SweConst.SEFLG_SPEED
-
-        for ((id, name) in planetIds) {
-            swe.swe_calc_ut(tjdUt, id, flags, xx, serr)
-            val lon = xx[0]
-            val speed = xx[3]
-            planetList.add(PlanetPosition(name, lon, speed, speed < 0.0))
-        }
-
-        // Ketu is opposite to Rahu (180°)
-        val rahu = planetList.first { it.name == "Rahu" }
-        val ketuLon = (rahu.longitude + 180.0) % 360.0
-        planetList.add(PlanetPosition("Ketu", ketuLon, rahu.speed, true))
-
-        val moon = planetList.first { it.name == "Moon" }
+        val jd = julianDay(utc)
+        val ayan = lahiriAyanamsha(jd)
+        val tropical = calculatePlanets(jd)
+        val sidereal = tropical.map { p -> p.copy(longitude = norm(p.longitude - ayan)) }
+        val moon = sidereal.first { it.name == "Moon" }
+        
+        val lst = localSiderealTime(jd, b.longitude)
+        val ascTropical = ascendant(lst, b.latitude)
+        val ascSidereal = norm(ascTropical - ayan)
+        
         val moonNak = nakIndex(moon.longitude)
         val pada = floor((moon.longitude % 13.3333333333) / 3.3333333333).toInt() + 1
         val houses = IntArray(12) { i -> (signIndex(ascSidereal) + i) % 12 }
+        val navtara = navtara(moonNak)
         val dasha = vimshottari(b.localDateTime, moon.longitude)
-        val kp = planetList.map { p -> KpInfo(p.name, nakLord[nakIndex(p.longitude) % 9], subLord(p.longitude)) }
-        val hits = computeHits(planetList, ascSidereal)
+        val kp = sidereal.map { p -> KpInfo(p.name, nakLord[nakIndex(p.longitude) % 9], subLord(p.longitude)) }
+        val hits = computeHits(sidereal, ascSidereal)
 
         return ChartResult(
-            birth = b,
-            ascendant = ascSidereal,
-            planets = planetList,
-            houses = houses,
-            moonSign = signNames[signIndex(moon.longitude)].en,
-            moonNakshatra = nakshatras[moonNak],
-            nakshatraPada = pada,
-            ayanamsha = ayanamsha,
-            navtara = navtara(moonNak),
-            dasha = dasha,
-            kp = kp,
-            hits = hits
+            b, ascSidereal, sidereal, houses, signNames[signIndex(moon.longitude)].en,
+            nakshatras[moonNak], pada, ayan, navtara, dasha, kp, hits
         )
     }
 
@@ -121,6 +73,98 @@ object AstroEngine {
     fun houseOf(longitude: Double, ascendant: Double): Int = (floor(norm(longitude - ascendant) / 30.0).toInt() + 1).coerceIn(1, 12)
     fun nakshatraName(longitude: Double): String = nakshatras[nakIndex(longitude)]
     fun nakshatraLord(longitude: Double): String = nakLord[nakIndex(longitude) % 9]
+
+    private fun julianDay(utc: ZonedDateTime): Double {
+        val y0 = utc.year; val m0 = utc.monthValue
+        val d = utc.dayOfMonth + (utc.hour + utc.minute / 60.0 + utc.second / 3600.0 + utc.nano / 3.6e12) / 24.0
+        var y = y0; var m = m0
+        if (m <= 2) { y -= 1; m += 12 }
+        val a = floor(y / 100.0); val b = 2 - a + floor(a / 4.0)
+        return floor(365.25 * (y + 4716)) + floor(30.6001 * (m + 1)) + d + b - 1524.5
+    }
+
+    private fun lahiriAyanamsha(jd: Double): Double {
+        val t = (jd - 2451545.0) / 36525.0
+        return 23.85675 + 1.396042 * t + 0.000308 * t * t
+    }
+
+    private fun localSiderealTime(jd: Double, longitude: Double): Double {
+        val t = (jd - 2451545.0) / 36525.0
+        val gmst = norm(280.46061837 + 360.98564736629 * (jd - 2451545.0) + 0.000387933 * t * t - (t * t * t) / 38710000.0)
+        return norm(gmst + longitude)
+    }
+
+    // Accurate Standard Horizon Lagna Formula
+    private fun ascendant(ramcDeg: Double, latDeg: Double): Double {
+        val eps = Math.toRadians(23.4392911)
+        val ramc = Math.toRadians(ramcDeg)
+        val phi = Math.toRadians(latDeg)
+        val y = cos(ramc)
+        val x = -sin(ramc) * cos(eps) - tan(phi) * sin(eps)
+        return norm(Math.toDegrees(atan2(y, x)))
+    }
+
+    private fun calculatePlanets(jd: Double): List<PlanetPosition> {
+        val d = jd - 2451543.5
+        val earth = orbital("Earth")
+        val epos = heliocentric(earth, d)
+        val result = mutableListOf<PlanetPosition>()
+
+        for (name in listOf("Mercury", "Venus", "Mars", "Jupiter", "Saturn")) {
+            val o = orbital(name)
+            val xyz = heliocentric(o, d)
+            val dx = xyz[0] - epos[0]; val dy = xyz[1] - epos[1]; val dz = xyz[2] - epos[2]
+            val lon = norm(Math.toDegrees(atan2(dy, dx)))
+            result += PlanetPosition(name, lon)
+        }
+
+        val sunLon = norm(Math.toDegrees(atan2(-epos[1], -epos[0])))
+        result += PlanetPosition("Sun", sunLon)
+        result += PlanetPosition("Moon", moonPosition(d))
+        val rahu = norm(125.04452 - 0.0529538083 * d)
+        result += PlanetPosition("Rahu", rahu, retrograde = true)
+        result += PlanetPosition("Ketu", norm(rahu + 180.0), retrograde = true)
+
+        val planetOrder = listOf("Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu")
+        return result.sortedBy { planetOrder.indexOf(it.name) }
+    }
+
+    private fun orbital(name: String): Orbital = when (name) {
+        "Mercury" -> Orbital(48.3313, 3.24587E-5, 7.0047, 5.00E-8, 29.1241, 1.01444E-5, 0.387098, 0.0, 0.205635, 5.59E-10, 168.6562, 4.0923344368)
+        "Venus" -> Orbital(76.6799, 2.46590E-5, 3.3946, 2.75E-8, 54.8910, 1.38374E-5, 0.72333, 0.0, 0.006773, -1.302E-9, 48.0052, 1.6021302244)
+        "Earth" -> Orbital(0.0, 0.0, 0.0, 0.0, 282.9404, 4.70935E-5, 1.0, 0.0, 0.016709, -1.151E-9, 356.0470, 0.9856002585)
+        "Mars" -> Orbital(49.5574, 2.11081E-5, 1.8497, -1.78E-8, 286.5016, 2.92961E-5, 1.523688, 0.0, 0.093405, 2.516E-9, 18.6021, 0.5240207766)
+        "Jupiter" -> Orbital(100.4542, 2.76854E-5, 1.3030, -1.557E-7, 273.8777, 1.64505E-5, 5.20256, 0.0, 0.048498, 4.469E-9, 19.8950, 0.0830853001)
+        else -> Orbital(113.6634, 2.38980E-5, 2.4886, -1.081E-7, 339.3939, 2.97661E-5, 9.55475, 0.0, 0.055546, -9.499E-9, 316.9670, 0.0334442282)
+    }
+
+    private fun heliocentric(o: Orbital, d: Double): DoubleArray {
+        val N = Math.toRadians(o.N + o.Ndot * d); val i = Math.toRadians(o.i + o.idot * d); val w = Math.toRadians(o.w + o.wdot * d)
+        val a = o.a + o.adot * d; val e = o.e + o.edot * d; val M = Math.toRadians(o.M + o.Mdot * d)
+        var E = M
+        repeat(8) { E -= (E - e * sin(E) - M) / (1 - e * cos(E)) }
+        val xv = a * (cos(E) - e); val yv = a * (sqrt(1 - e * e) * sin(E))
+        val v = atan2(yv, xv); val r = hypot(xv, yv)
+        val xh = r * (cos(N) * cos(v + w) - sin(N) * sin(v + w) * cos(i))
+        val yh = r * (sin(N) * cos(v + w) + cos(N) * sin(v + w) * cos(i))
+        val zh = r * (sin(v + w) * sin(i))
+        return doubleArrayOf(xh, yh, zh)
+    }
+
+    private fun moonPosition(d: Double): Double {
+        val N = Math.toRadians(norm(125.1228 - 0.0529538083 * d))
+        val i = Math.toRadians(5.1454)
+        val w = Math.toRadians(norm(318.0634 + 0.1643573223 * d))
+        val a = 60.2666; val e = 0.0549
+        val M = Math.toRadians(norm(115.3654 + 13.0649929509 * d))
+        var E = M
+        repeat(8) { E -= (E - e * sin(E) - M) / (1 - e * cos(E)) }
+        val xv = a * (cos(E) - e); val yv = a * sqrt(1 - e * e) * sin(E)
+        val v = atan2(yv, xv); val r = hypot(xv, yv)
+        val xh = r * (cos(N) * cos(v + w) - sin(N) * sin(v + w) * cos(i))
+        val yh = r * (sin(N) * cos(v + w) + cos(N) * sin(v + w) * cos(i))
+        return norm(Math.toDegrees(atan2(yh, xh)))
+    }
 
     private fun subLord(lon: Double): String {
         val frac = (norm(lon) % (360.0 / 27.0)) / (360.0 / 27.0)
@@ -134,24 +178,17 @@ object AstroEngine {
     }
 
     private fun vimshottari(birth: LocalDateTime, moonLon: Double): List<DashaPeriod> {
-        val nak = nakIndex(moonLon)
-        val lordIndex = nak % 9
-        val lord = dashaOrder[lordIndex]
-        val span = 13.3333333333
-        val elapsed = (moonLon - nak * span) / span
+        val nak = nakIndex(moonLon); val lordIndex = nak % 9; val lord = dashaOrder[lordIndex]
+        val span = 13.3333333333; val elapsed = (moonLon - nak * span) / span
         val balance = dashaYears[lord]!! * (1.0 - elapsed)
         val list = mutableListOf<DashaPeriod>()
-        var start = birth
-        var idx = lordIndex
-        var first = true
+        var start = birth; var idx = lordIndex; var first = true
         repeat(12) {
             val l = dashaOrder[idx % 9]
             val years = if (first) balance else dashaYears[l]!!
             val end = start.plusSeconds((years * 365.2425 * 86400).toLong())
             list.add(DashaPeriod(l, start, end))
-            start = end
-            idx++
-            first = false
+            start = end; idx++; first = false
         }
         return list
     }
@@ -164,57 +201,47 @@ object AstroEngine {
     private fun computeHits(ps: List<PlanetPosition>, asc: Double): List<String> {
         val out = mutableListOf<String>()
         for (i in ps.indices) for (j in i + 1 until ps.size) {
-            val d = kotlin.math.abs(norm(ps[i].longitude - ps[j].longitude))
-            val sep = kotlin.math.min(d, 360.0 - d)
+            val d = abs(norm(ps[i].longitude - ps[j].longitude))
+            val sep = min(d, 360.0 - d)
             if (sep <= 8.0) out += "${ps[i].name} conjunct ${ps[j].name} (${"%.1f".format(sep)}°)"
-            if (kotlin.math.abs(sep - 120.0) <= 6.0) out += "${ps[i].name} trine ${ps[j].name}"
-            if (kotlin.math.abs(sep - 180.0) <= 8.0) out += "${ps[i].name} opposite ${ps[j].name}"
+            if (abs(sep - 120.0) <= 6.0) out += "${ps[i].name} trine ${ps[j].name}"
+            if (abs(sep - 180.0) <= 8.0) out += "${ps[i].name} opposite ${ps[j].name}"
         }
         return out.take(30)
     }
 
     fun transitHits(natal: ChartResult, now: ZonedDateTime): List<String> {
         val utc = now.withZoneSameInstant(ZoneId.of("UTC"))
-        val hourDecimal = utc.hour + (utc.minute / 60.0) + (utc.second / 3600.0)
-        val sd = SweDate(utc.year, utc.monthValue, utc.dayOfMonth, hourDecimal)
-        val xx = DoubleArray(6)
-        val flags = SweConst.SEFLG_SIDEREAL
+        val jd = julianDay(utc)
+        val ayan = lahiriAyanamsha(jd)
+        val transits = calculatePlanets(jd).map { it.copy(longitude = norm(it.longitude - ayan)) }
         val out = mutableListOf<String>()
 
-        val transits = listOf(
-            SweConst.SE_SUN to "Sun", SweConst.SE_MOON to "Moon",
-            SweConst.SE_MARS to "Mars", SweConst.SE_JUPITER to "Jupiter", SweConst.SE_SATURN to "Saturn"
-        ).map { (id, name) ->
-            swe.swe_calc_ut(sd.julDay, id, flags, xx, StringBuffer())
-            name to xx[0]
-        }
-
-        for ((tName, tLon) in transits) for (n in natal.planets) {
-            val d = kotlin.math.abs(norm(tLon - n.longitude))
-            val sep = kotlin.math.min(d, 360.0 - d)
-            if (sep <= 3.0) out += "$tName transit conjunct natal ${n.name} (${String.format("%.1f", sep)}°)"
+        for (t in transits) for (n in natal.planets) {
+            val d = abs(norm(t.longitude - n.longitude))
+            val sep = min(d, 360.0 - d)
+            if (sep <= 3.0) out += "${t.name} transit conjunct natal ${n.name} (${String.format("%.1f", sep)}°)"
         }
         return out
     }
 
     fun chandraAshtam(natal: ChartResult, now: ZonedDateTime): Boolean {
         val utc = now.withZoneSameInstant(ZoneId.of("UTC"))
-        val hourDecimal = utc.hour + (utc.minute / 60.0) + (utc.second / 3600.0)
-        val sd = SweDate(utc.year, utc.monthValue, utc.dayOfMonth, hourDecimal)
-        val xx = DoubleArray(6)
-        swe.swe_calc_ut(sd.julDay, SweConst.SE_MOON, SweConst.SEFLG_SIDEREAL, xx, StringBuffer())
-        val currentMoonSign = signIndex(xx[0])
+        val jd = julianDay(utc)
+        val ayan = lahiriAyanamsha(jd)
+        val moon = calculatePlanets(jd).first { it.name == "Moon" }
+        val currentMoonSign = signIndex(norm(moon.longitude - ayan))
         val natalMoonSign = signIndex(natal.planets.first { it.name == "Moon" }.longitude)
         return (currentMoonSign - natalMoonSign + 12) % 12 == 7
     }
 
     fun dailyHoroscope(r: ChartResult, now: ZonedDateTime): String {
         val utc = now.withZoneSameInstant(ZoneId.of("UTC"))
-        val hourDecimal = utc.hour + (utc.minute / 60.0) + (utc.second / 3600.0)
-        val sd = SweDate(utc.year, utc.monthValue, utc.dayOfMonth, hourDecimal)
-        val xx = DoubleArray(6)
-        swe.swe_calc_ut(sd.julDay, SweConst.SE_MOON, SweConst.SEFLG_SIDEREAL, xx, StringBuffer())
-        val house = houseOf(xx[0], r.ascendant)
+        val jd = julianDay(utc)
+        val ayan = lahiriAyanamsha(jd)
+        val moon = calculatePlanets(jd).first { it.name == "Moon" }
+        val currentMoonLon = norm(moon.longitude - ayan)
+        val house = houseOf(currentMoonLon, r.ascendant)
         return when (house) {
             1 -> "आज self-confidence और नए decisions के लिए अच्छा दिन है।"
             2 -> "धन और परिवार से जुड़े विषयों में practical रहें।"
