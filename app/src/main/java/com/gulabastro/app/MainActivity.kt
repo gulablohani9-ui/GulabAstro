@@ -12,12 +12,10 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -33,6 +31,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import com.gulabastro.app.astro.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -54,7 +54,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-data class City(val lat: Double, val lon: Double, val zone: String = "Asia/Kolkata")
+data class City(val name: String, val lat: Double, val lon: Double, val zone: String = "Asia/Kolkata")
 
 enum class ScreenTab(val title: String, val icon: ImageVector) {
     INPUT("Form", Icons.Default.Edit),
@@ -72,6 +72,8 @@ fun GulabAstroApp() {
     var date by remember { mutableStateOf("1990-01-01") }
     var time by remember { mutableStateOf("12:00") }
     var place by remember { mutableStateOf("Jodhpur") }
+    var selectedCity by remember { mutableStateOf<City?>(City("Jodhpur, Rajasthan, India", 26.2389, 73.0243)) }
+
     var chart by remember { mutableStateOf<ChartResult?>(null) }
     var error by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
@@ -113,6 +115,11 @@ fun GulabAstroApp() {
                     date = date, onDateChange = { date = it },
                     time = time, onTimeChange = { time = it },
                     place = place, onPlaceChange = { place = it },
+                    selectedCity = selectedCity,
+                    onCitySelected = { city ->
+                        selectedCity = city
+                        place = city.name
+                    },
                     isLoading = isLoading,
                     error = error,
                     onGenerate = {
@@ -121,8 +128,9 @@ fun GulabAstroApp() {
                             error = ""
                             try {
                                 val dt = LocalDateTime.parse("$date $time", DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
-                                val c = fetchCityCoordinates(ctx, place)
-                                val res = AstroEngine.calculate(BirthData(name.ifBlank { "User" }, dt, c.lat, c.lon, ZoneId.of(c.zone)))
+                                val finalCity = selectedCity ?: searchCitySuggestions(ctx, place).firstOrNull() ?: City(place, 26.2389, 73.0243)
+                                
+                                val res = AstroEngine.calculate(BirthData(name.ifBlank { "User" }, dt, finalCity.lat, finalCity.lon, ZoneId.of(finalCity.zone)))
                                 chart = res
                                 selectedTab = ScreenTab.CHART
                             } catch (e: Exception) {
@@ -150,16 +158,85 @@ fun InputView(
     date: String, onDateChange: (String) -> Unit,
     time: String, onTimeChange: (String) -> Unit,
     place: String, onPlaceChange: (String) -> Unit,
+    selectedCity: City?,
+    onCitySelected: (City) -> Unit,
     isLoading: Boolean,
     error: String,
     onGenerate: () -> Unit
 ) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var suggestions by remember { mutableStateOf<List<City>>(emptyList()) }
+    var searchJob by remember { mutableStateOf<Job?>(null) }
+    var isSearchingCity by remember { mutableStateOf(false) }
+
     LazyColumn(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Text("जातक विवरण (Birth Profile)", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
         item { OutlinedTextField(name, onNameChange, label = { Text("Name") }, modifier = Modifier.fillMaxWidth()) }
         item { OutlinedTextField(date, onDateChange, label = { Text("Birth Date (YYYY-MM-DD)") }, modifier = Modifier.fillMaxWidth()) }
         item { OutlinedTextField(time, onTimeChange, label = { Text("Birth Time (HH:MM)") }, modifier = Modifier.fillMaxWidth()) }
-        item { OutlinedTextField(place, onPlaceChange, label = { Text("City (Automatic Coordinates)") }, modifier = Modifier.fillMaxWidth()) }
+
+        item {
+            Column {
+                OutlinedTextField(
+                    value = place,
+                    onValueChange = { query ->
+                        onPlaceChange(query)
+                        searchJob?.cancel()
+                        if (query.trim().length >= 2) {
+                            searchJob = scope.launch {
+                                isSearchingCity = true
+                                delay(300)
+                                suggestions = searchCitySuggestions(ctx, query)
+                                isSearchingCity = false
+                            }
+                        } else {
+                            suggestions = emptyList()
+                        }
+                    },
+                    label = { Text("Birth Place (Type to auto-suggest)") },
+                    trailingIcon = {
+                        if (isSearchingCity) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.LocationOn, contentDescription = null)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (suggestions.isNotEmpty()) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Column {
+                            suggestions.forEach { suggestion ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            onCitySelected(suggestion)
+                                            suggestions = emptyList()
+                                        }
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.Place, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(Modifier.width(8.dp))
+                                    Column {
+                                        Text(suggestion.name, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                        Text("Lat: ${fmt(suggestion.lat)}°, Lon: ${fmt(suggestion.lon)}°", fontSize = 11.sp, color = Color.Gray)
+                                    }
+                                }
+                                HorizontalDivider()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if (error.isNotBlank()) item { Text(error, color = MaterialTheme.colorScheme.error) }
         item {
             Button(
@@ -167,7 +244,7 @@ fun InputView(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isLoading
             ) {
-                Text(if (isLoading) "Creating Chart..." else "Generate Vedic Kundli")
+                Text(if (isLoading) "Calculating..." else "Generate Vedic Kundli")
             }
         }
     }
@@ -339,27 +416,35 @@ fun EmptyState() {
 
 private fun fmt(v: Double) = "%.2f".format(v)
 
-private suspend fun fetchCityCoordinates(ctx: Context, cityName: String): City = withContext(Dispatchers.IO) {
+private suspend fun searchCitySuggestions(ctx: Context, query: String): List<City> = withContext(Dispatchers.IO) {
+    val results = mutableListOf<City>()
     try {
         val geocoder = Geocoder(ctx, Locale.getDefault())
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val list = mutableListOf<Address>()
-            geocoder.getFromLocationName(cityName, 1)?.let { list.addAll(it) }
-            if (list.isNotEmpty()) {
-                val addr = list[0]
-                return@withContext City(addr.latitude, addr.longitude)
+            geocoder.getFromLocationName(query, 5)?.let { list.addAll(it) }
+            list.forEach { addr ->
+                val name = listOfNotNull(addr.locality ?: addr.subAdminArea, addr.adminArea, addr.countryName).joinToString(", ")
+                results.add(City(name.ifBlank { query }, addr.latitude, addr.longitude))
             }
         } else {
             @Suppress("DEPRECATION")
-            val results = geocoder.getFromLocationName(cityName, 1)
-            if (!results.isNullOrEmpty()) {
-                val addr = results[0]
-                return@withContext City(addr.latitude, addr.longitude)
+            val list = geocoder.getFromLocationName(query, 5)
+            list?.forEach { addr ->
+                val name = listOfNotNull(addr.locality ?: addr.subAdminArea, addr.adminArea, addr.countryName).joinToString(", ")
+                results.add(City(name.ifBlank { query }, addr.latitude, addr.longitude))
             }
         }
     } catch (_: Exception) {}
 
-    City(26.9124, 75.7873)
+    if (results.isEmpty()) {
+        val q = query.trim().lowercase()
+        if ("jodhpur".contains(q)) results.add(City("Jodhpur, Rajasthan", 26.2389, 73.0243))
+        if ("jaipur".contains(q)) results.add(City("Jaipur, Rajasthan", 26.9124, 75.7873))
+        if ("delhi".contains(q)) results.add(City("Delhi, India", 28.6139, 77.2090))
+        if ("mumbai".contains(q)) results.add(City("Mumbai, Maharashtra", 19.0760, 72.8777))
+    }
+    results
 }
 
 private fun exportPdf(ctx: Context, r: ChartResult) {
