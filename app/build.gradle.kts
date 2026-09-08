@@ -33,11 +33,6 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    
-    // Swiss Ephemeris Engine (NASA JPL standard accuracy)
-    implementation("de.th-koeln.inf.astro:swisseph:2.01.00-01")
-
-    // WorkManager
     implementation("androidx.work:work-runtime-ktx:2.10.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
