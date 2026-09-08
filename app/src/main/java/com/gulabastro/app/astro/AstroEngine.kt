@@ -55,7 +55,8 @@ object AstroEngine {
         val houses = IntArray(12) { i -> ((signIndex(ascSidereal) + i) % 12) }
         val navtara = navtara(moonNak)
         val dasha = vimshottari(b.localDateTime, moon.longitude)
-        val kp = sidereal.map { p -> KpInfo(p.name, nakLord[nakIndex(p.longitude)], subLord(p.longitude)) }
+        // Fixed: nakLord array bounds (% 9)
+        val kp = sidereal.map { p -> KpInfo(p.name, nakLord[nakIndex(p.longitude) % 9], subLord(p.longitude)) }
         val hits = computeHits(sidereal, ascSidereal)
         return ChartResult(b, ascSidereal, sidereal, houses, signNames[signIndex(moon.longitude)].en, nakshatras[moonNak], pada, ayan, navtara, dasha, kp, hits)
     }
@@ -74,7 +75,6 @@ object AstroEngine {
         return floor(365.25 * (y + 4716)) + floor(30.6001 * (m + 1)) + d + b - 1524.5
     }
 
-    // Meeus/Schlyter-style low-order planetary model. Suitable for an offline astrology engine; Swiss Ephemeris can be swapped in via an adapter.
     private fun heliocentricToGeocentric(jd: Double): List<PlanetPosition> {
         val d = jd - 2451543.5
         val earth = orbital("Earth", d)
@@ -171,7 +171,8 @@ object AstroEngine {
     }
     fun houseOf(longitude: Double, ascendant: Double): Int = (floor(norm(longitude - ascendant) / 30.0).toInt() + 1).coerceIn(1, 12)
     fun nakshatraName(longitude: Double): String = nakshatras[nakIndex(longitude)]
-    fun nakshatraLord(longitude: Double): String = nakLord[nakIndex(longitude)]
+    // Fixed: nakLord array bounds (% 9)
+    fun nakshatraLord(longitude: Double): String = nakLord[nakIndex(longitude) % 9]
     fun currentTransit(now: ZonedDateTime): List<PlanetPosition> {
         val utc = now.withZoneSameInstant(ZoneOffset.UTC)
         val jd = julianDay(utc)
@@ -200,5 +201,4 @@ object AstroEngine {
         val house = houseOf(moon.longitude, r.ascendant)
         return when(house) { 1 -> "आज self-confidence और नए decisions के लिए अच्छा दिन है।"; 2 -> "धन और परिवार से जुड़े विषयों में practical रहें।"; 3 -> "Communication, travel और skill-building पर focus करें।"; 4 -> "घर-परिवार और emotional balance को priority दें।"; 5 -> "Creativity, romance और learning में initiative लें।"; 6 -> "Routine, health habits और pending work पूरा करें।"; 7 -> "Partnership और relationships में खुलकर बात करें।"; 8 -> "Risky decisions से बचें और documents ध्यान से देखें।"; 9 -> "Learning, travel और spiritual activities लाभ दे सकती हैं।"; 10 -> "Career में visibility और responsibility बढ़ सकती है।"; 11 -> "Network और gains से जुड़े opportunities पर ध्यान दें।"; else -> "Rest, reflection और planning के लिए समय निकालें।" }
     }
-
 }
