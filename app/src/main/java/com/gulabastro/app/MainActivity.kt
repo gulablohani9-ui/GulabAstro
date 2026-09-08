@@ -194,7 +194,7 @@ fun InputView(
                             suggestions = emptyList()
                         }
                     },
-                    label = { Text("Birth Place (Type to auto-suggest)") },
+                    label = { Text("Birth Place (Type city name)") },
                     trailingIcon = {
                         if (isSearchingCity) {
                             CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -244,7 +244,7 @@ fun InputView(
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isLoading
             ) {
-                Text(if (isLoading) "Calculating..." else "Generate Vedic Kundli")
+                Text(if (isLoading) "Swiss Ephemeris Calculating..." else "Generate Vedic Kundli")
             }
         }
     }
@@ -260,7 +260,7 @@ fun ChartWindow(chart: ChartResult?) {
                     Text("Ascendant (लग्न): ${AstroEngine.sign(chart.ascendant)} (${fmt(chart.ascendant)}°)", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                     Text("Moon Sign (राशि): ${chart.moonSign}", fontSize = 16.sp)
                     Text("Nakshatra: ${chart.moonNakshatra} (Pada ${chart.nakshatraPada})", fontSize = 16.sp)
-                    Text("Ayanamsha (Lahiri): ${fmt(chart.ayanamsha)}°", fontSize = 14.sp)
+                    Text("Lahiri Ayanamsha: ${fmt(chart.ayanamsha)}°", fontSize = 14.sp)
                 }
             }
         }
@@ -400,7 +400,7 @@ fun InsightsWindow(chart: ChartResult?) {
                 Column(Modifier.padding(16.dp)) {
                     Text("वास्तु एवं उपाय (Remedies)", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     Spacer(Modifier.height(6.dp))
-                    Text("• ईशान कोण (North-East) को सदा स्वच्छ और भारमुक्त रखें।\n• घर का मुख्य द्वार साफ रखें।\n• चंद्र शांति हेतु सोमवार को जल का अपव्यय रोकें।")
+                    Text("• ईशान कोण (North-East) को सदा स्वच्छ और भारमुक्त रखें।\n• मुख्य द्वार साफ रखें।\n• चंद्र शांति हेतु जल का अपव्यय रोकें।")
                 }
             }
         }
@@ -458,7 +458,7 @@ private fun exportPdf(ctx: Context, r: ChartResult) {
     write("Name: ${r.birth.name} (${r.birth.localDateTime})")
     write("Lagna: ${AstroEngine.sign(r.ascendant)} ${fmt(r.ascendant)}°")
     write("Moon: ${r.moonSign} / ${r.moonNakshatra}")
-    write("--- Planets ---")
+    write("--- Planets (Swiss Ephemeris Precision) ---")
     r.planets.forEach { write("${it.name}: ${fmt(it.longitude)}° ${AstroEngine.sign(it.longitude)}") }
 
     doc.finishPage(page)
