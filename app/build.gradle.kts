@@ -35,5 +35,8 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.work:work-runtime-ktx:2.10.0")
 
+    // Official Swiss Ephemeris Engine (JitPack)
+    implementation("com.github.aloistr:swisseph-java:2.08.00-01")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
